@@ -1,47 +1,44 @@
 import express from 'express'
-import axios from 'axios'
-import { query, queryOne } from '../db/index.js'
+import { query } from '../db/index.js'
 import { authMiddleware } from '../middleware/auth.js'
 
 const router = express.Router()
+const JUNKIE_API = 'https://api.jnkie.com/api/v2'
 
 router.post('/', authMiddleware, async (req, res) => {
   const { junkie_key } = req.body
   if (!junkie_key) return res.status(400).json({ error: 'Missing junkie_key' })
 
   try {
-    // Verify with Junkie API
-    const response = await axios.post('https://api.junkie.lol/v1/verify', {
-      key: junkie_key
-    }, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 5000
+    const junkieRes = await fetch(`${JUNKIE_API}/keys?key=${encodeURIComponent(junkie_key)}&limit=1`, {
+      headers: { 'Authorization': `Bearer ${process.env.JUNKIE_API_KEY}` }
     })
 
-    const data = response.data
-    if (!data.valid) {
-      return res.status(400).json({ error: 'Invalid key', message: 'This key is not valid.' })
-    }
-    if (data.type !== 'premium') {
-      return res.status(400).json({ error: 'Not premium', message: 'Only premium keys can activate CrypT Hub.' })
+    if (!junkieRes.ok) {
+      return res.status(502).json({ error: 'junkie_api_error', message: 'Could not verify key.' })
     }
 
-    const expiresAt = data.expires_at || null
+    const junkieData = await junkieRes.json()
+    const keys = junkieData.keys || []
+
+    if (keys.length === 0) return res.status(404).json({ error: 'key_not_found', message: 'Key not found.' })
+
+    const keyInfo = keys[0]
+    if (!keyInfo.is_premium)    return res.status(403).json({ error: 'premium_required', message: 'Not a premium key.' })
+    if (keyInfo.is_invalidated) return res.status(403).json({ error: 'key_invalidated',  message: 'Key invalidated.' })
+    if (keyInfo.expires_at && new Date(keyInfo.expires_at) < new Date()) {
+      return res.status(403).json({ error: 'key_expired', message: 'Key expired.' })
+    }
 
     await query(
-      `UPDATE profiles
-       SET is_premium = 1, junkie_key_id = ?, key_expires_at = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [data.key_id || junkie_key, expiresAt, req.user.id]
+      `UPDATE profiles SET is_premium = 1, junkie_key_id = ?, junkie_key_hash = ?, key_expires_at = ?, updated_at = NOW() WHERE id = ?`,
+      [keyInfo.id, junkie_key.replace(/-/g, '').substring(0, 32), keyInfo.expires_at || null, req.user.id]
     )
 
-    return res.json({ success: true, expires_at: expiresAt, key_id: data.key_id })
+    return res.json({ success: true, expires_at: keyInfo.expires_at || null, key_id: keyInfo.id })
 
   } catch (err) {
-    if (err.response?.status === 404) {
-      return res.status(400).json({ error: 'Key not found', message: 'This key does not exist.' })
-    }
-    console.error('Junkie verify error:', err.message)
+    console.error('Junkie error:', err.message)
     return res.status(500).json({ error: 'Verification service unavailable' })
   }
 })

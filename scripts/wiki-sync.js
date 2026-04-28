@@ -8,9 +8,8 @@ import { query } from '../src/db/index.js'
 const WIKI_API  = 'https://swordburst2.fandom.com/api.php'
 const DELAY_MS  = 300  // be polite with the wiki API
 const CATEGORIES = [
-  'Greatswords', 'Swords', 'Daggers', 'Spears', 'Axes',
-  'Hammers', 'Staves', 'Bows', 'Shields',
-  'Armor', 'Accessories', 'Materials', 'Skills', 'Companions'
+  'Longswords', 'Greatswords', 'Katanas', 'Rapiers', 'Spears', 'Scythes',
+  'Armors', 'Accessories', 'Companions', 'Upgrade Crystal',
 ]
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }

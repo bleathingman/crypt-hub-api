@@ -12,7 +12,8 @@ const CATEGORIES = [
   'Spear', 'Scythe', 'Sabre', 'Phaseblade',
   'Dagger', 'Stave', 'Hammer', 'Shield',
   'Armor', 'Accessory', 'Companions', 'Aura',
-  'Material', 'Crystal', 'Skills'
+  'Material', 'Crystal', 'Skills',
+  'Burst', 'Egg Realm 2026'
 ]
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }

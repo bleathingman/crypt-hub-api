@@ -3,6 +3,13 @@ import { query, queryOne } from '../db/index.js'
 import { authMiddleware } from '../middleware/auth.js'
 
 const router = express.Router()
+
+router.get('/avatar/:robloxId', async (req, res) => {
+  const url = `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${req.params.robloxId}&size=48x48&format=Png`
+  const data = await fetch(url).then(r => r.json())
+  res.json(data)
+})
+
 router.use(authMiddleware)
 
 // ─── GET /data/accounts ───────────────────────────────────────

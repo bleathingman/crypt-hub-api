@@ -6,6 +6,7 @@ import authRouter   from './routes/auth.js'
 import syncRouter   from './routes/sync.js'
 import dataRouter   from './routes/data.js'
 import junkieRouter from './routes/junkie.js'
+import wikiRouter from './routes/wiki.js'
 
 const app  = express()
 const PORT = process.env.PORT || 3000
@@ -28,6 +29,7 @@ app.use('/auth',          authRouter)
 app.use('/api/sync',      syncRouter)
 app.use('/api/data',      dataRouter)
 app.use('/api/junkie-verify', junkieRouter)
+app.use('/api/wiki', wikiRouter)
 
 // ─── Health check ─────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }))

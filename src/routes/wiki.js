@@ -254,4 +254,16 @@ router.get('/', async (req, res) => {
   }
 })
 
+// ─── eggs ────────────────────────────────────────────────────
+router.get('/eggs', async (req, res) => {
+  try {
+    const rows = await query(
+      `SELECT name, image_url FROM wiki_items WHERE name LIKE 'Egg of%' ORDER BY name ASC`
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router

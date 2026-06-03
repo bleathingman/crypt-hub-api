@@ -29,7 +29,7 @@ export async function authMiddleware(req, res, next) {
 }
 
 export async function apiKeyMiddleware(req, res, next) {
-  const apiKey = req.body?.api_key || req.headers['x-api-key']
+  const apiKey = req.body?.api_key || req.headers['x-api-key'] || req.query?.api_key
   if (!apiKey) return res.status(401).json({ error: 'Missing api_key' })
 
   const profile = await queryOne('SELECT * FROM profiles WHERE api_key = ?', [apiKey])

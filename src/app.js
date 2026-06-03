@@ -2,11 +2,12 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 
-import authRouter   from './routes/auth.js'
-import syncRouter   from './routes/sync.js'
-import dataRouter   from './routes/data.js'
-import junkieRouter from './routes/junkie.js'
-import wikiRouter from './routes/wiki.js'
+import authRouter       from './routes/auth.js'
+import syncRouter       from './routes/sync.js'
+import dataRouter       from './routes/data.js'
+import junkieRouter     from './routes/junkie.js'
+import wikiRouter       from './routes/wiki.js'
+import modTrackerRouter from './routes/mod-tracker.js'
 
 const app  = express()
 const PORT = process.env.PORT || 3000
@@ -25,11 +26,23 @@ app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
 // ─── Routes ───────────────────────────────────────────────────
-app.use('/auth',          authRouter)
-app.use('/api/sync',      syncRouter)
-app.use('/api/data',      dataRouter)
+app.use('/auth',              authRouter)
+app.use('/api/sync',          syncRouter)
+app.use('/api/data',          dataRouter)
 app.use('/api/junkie-verify', junkieRouter)
-app.use('/api/wiki', wikiRouter)
+app.use('/api/wiki',          wikiRouter)
+app.use('/api/mod-tracker',   modTrackerRouter)
+
+app.get('/api/avatars', async (req, res) => {
+  const { userIds } = req.query
+  if (!userIds) return res.json({ data: [] })
+  try {
+    const data = await fetch(
+      `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userIds}&size=150x150&format=Png&isCircular=false`
+    ).then(r => r.json())
+    res.json(data)
+  } catch { res.json({ data: [] }) }
+})
 
 // ─── Health check ─────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }))

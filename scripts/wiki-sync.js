@@ -1,19 +1,26 @@
 // scripts/wiki-sync.js
 // Usage: node scripts/wiki-sync.js
-// Dumps SB2 wiki items into the wiki_items table
+// Fetches SB2 wiki items and writes wiki-dump.sql (import via phpMyAdmin)
 
-import 'dotenv/config'
-import { query } from '../src/db/index.js'
+import { createWriteStream } from 'fs'
+import { resolve } from 'path'
 
 const WIKI_API  = 'https://swordburst2.fandom.com/api.php'
 const DELAY_MS  = 300  // be polite with the wiki API
+const OUT_FILE  = resolve('scripts/wiki-dump.sql')
+
 const CATEGORIES = [
-  '1HSword', '2HSword', 'Greatsword', 'Katana', 'Rapier', 'Lance',
-  'Spear', 'Scythe', 'Sabre', 'Phaseblade',
+  // Weapons
+  '1HSword', '2HSword', 'Katana', 'Rapier', 'Lance',
+  'Spear', 'Scythe', 'Reaper', 'Sabre', 'Phaseblade',
   'Dagger', 'Stave', 'Hammer', 'Shield',
-  'Armor', 'Accessory', 'Companions', 'Aura',
+  // Equipment
+  'Armor', 'Accessory', 'Accessories', 'Companions', 'Aura',
+  // Items
   'Material', 'Crystal', 'Skills',
-  'Burst', 'Egg Realm 2026', 'Tributes', 'Event Item'
+  // Events & special
+  'Burst', 'Tributes', 'Event Item',
+  'Egg Realm 2021', 'Egg Realm 2023', 'Egg Realm 2025', 'Egg Realm 2026',
 ]
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
@@ -21,6 +28,10 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 async function wikiGet(params) {
   const url = WIKI_API + '?' + new URLSearchParams({ ...params, format: 'json' }).toString()
   const res  = await fetch(url, { headers: { 'User-Agent': 'CrypTHub/1.0 wiki-sync' } })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status} ${res.statusText} — ${body.slice(0, 200)}`)
+  }
   return res.json()
 }
 
@@ -73,10 +84,15 @@ function parseInfobox(wikitext) {
     key = null; val = []
   }
 
-  for (const line of lines) {
-    const m = line.match(/^\|\s*([^|={}\n]+?)\s*=\s*(.*)$/)
-    if (m) { save(); key = m[1]; val = [m[2]] }
-    else if (key && line.trim() && !line.startsWith('{{') && !line.startsWith('}}')) val.push(line)
+  for (const rawLine of lines) {
+    // A single line can have multiple fields: "| cost = None| abilities = ..."
+    // Split on | only when followed by word chars and =
+    const parts = rawLine.split(/(?=\|(?!\|)\s*[a-z_][a-z_ ]*\s*=)/i)
+    for (const line of parts) {
+      const m = line.match(/^\|\s*([^|={}\n]+?)\s*=\s*(.*)$/)
+      if (m) { save(); key = m[1]; val = [m[2]] }
+      else if (key && line.trim() && !line.startsWith('{{') && !line.startsWith('}}')) val.push(line)
+    }
   }
   save()
   return fields
@@ -104,14 +120,12 @@ function find(fields, ...keys) {
 async function fetchItem(title) {
   const pageName = title.replace(/ /g, '_')
 
-  // Wikitext + images list
   const parseData = await wikiGet({ action: 'parse', page: pageName, prop: 'wikitext|images', redirects: '1' })
   if (parseData.error) return null
   const parse    = parseData.parse || {}
   const wikitext = parse.wikitext?.['*'] || ''
   const fields   = parseInfobox(wikitext)
 
-  // Image: try pageimages thumbnail first
   let imageUrl = null
   try {
     const imgData = await wikiGet({ action: 'query', titles: pageName, prop: 'pageimages', pithumbsize: '200', redirects: '1' })
@@ -119,10 +133,8 @@ async function fetchItem(title) {
     imageUrl = pages[0]?.thumbnail?.source || null
   } catch (_) {}
 
-  // Fallback: imageinfo on best matching file
   if (!imageUrl && parse.images?.length) {
-    const base  = pageName.toLowerCase()
-    const first = base.split('_')[0]
+    const first = pageName.toLowerCase().split('_')[0]
     const candidates = parse.images.filter(f => {
       const fn = f.toLowerCase()
       return !fn.includes('icon_') && !fn.includes('ui_') && !fn.includes('button') &&
@@ -160,33 +172,26 @@ async function fetchItem(title) {
   }
 }
 
-// ── Upsert a single item into DB ──────────────────────────────
-async function upsertItem(item) {
-  await query(`
-    INSERT INTO wiki_items
-      (name, image_url, type, level, rarity,
-       damage_clean, damage_max, defense_clean, defense_max,
-       critical, source, cost, abilities)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE
-      image_url     = VALUES(image_url),
-      type          = VALUES(type),
-      level         = VALUES(level),
-      rarity        = VALUES(rarity),
-      damage_clean  = VALUES(damage_clean),
-      damage_max    = VALUES(damage_max),
-      defense_clean = VALUES(defense_clean),
-      defense_max   = VALUES(defense_max),
-      critical      = VALUES(critical),
-      source        = VALUES(source),
-      cost          = VALUES(cost),
-      abilities     = VALUES(abilities),
-      updated_at    = CURRENT_TIMESTAMP
-  `, [
-    item.name, item.image_url, item.type, item.level, item.rarity,
-    item.damage_clean, item.damage_max, item.defense_clean, item.defense_max,
-    item.critical, item.source, item.cost, item.abilities,
-  ])
+// ── Escape a value for SQL ────────────────────────────────────
+function sqlVal(v) {
+  if (v === null || v === undefined) return 'NULL'
+  return `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+}
+
+function toSqlRow(item) {
+  const cols = [
+    'name', 'image_url', 'type', 'level', 'rarity',
+    'damage_clean', 'damage_max', 'defense_clean', 'defense_max',
+    'critical', 'source', 'cost', 'abilities',
+  ]
+  const vals = cols.map(c => sqlVal(item[c])).join(', ')
+  return `INSERT INTO wiki_items (${cols.join(', ')}) VALUES (${vals})
+  ON DUPLICATE KEY UPDATE
+    image_url=VALUES(image_url), type=VALUES(type), level=VALUES(level),
+    rarity=VALUES(rarity), damage_clean=VALUES(damage_clean), damage_max=VALUES(damage_max),
+    defense_clean=VALUES(defense_clean), defense_max=VALUES(defense_max),
+    critical=VALUES(critical), source=VALUES(source), cost=VALUES(cost),
+    abilities=VALUES(abilities), updated_at=CURRENT_TIMESTAMP;`
 }
 
 // ── Main ──────────────────────────────────────────────────────
@@ -201,25 +206,36 @@ async function main() {
     await sleep(DELAY_MS)
   }
 
-  console.log(`📦 ${allTitles.size} unique items found`)
+  console.log(`📦 ${allTitles.size} unique items found — fetching pages...`)
 
-  let done = 0, errors = 0
+  const stream = createWriteStream(OUT_FILE, { encoding: 'utf8' })
+  stream.write('SET NAMES utf8mb4;\n')
+  stream.write('SET foreign_key_checks = 0;\n\n')
+
+  let done = 0, skipped = 0, errors = 0
   for (const title of allTitles) {
     try {
       const item = await fetchItem(title)
       if (item) {
-        await upsertItem(item)
+        stream.write(toSqlRow(item) + '\n')
         done++
         if (done % 50 === 0) console.log(`  ✅ ${done}/${allTitles.size}`)
+      } else {
+        skipped++
       }
     } catch (e) {
       errors++
-      console.error(`  ❌ ${title}: ${e.message}`)
+      console.error(`  ❌ ${title}: ${e?.message || e?.code || JSON.stringify(e)}`)
     }
     await sleep(DELAY_MS)
   }
 
-  console.log(`\n✅ Done — ${done} items synced, ${errors} errors`)
+  stream.write('\nSET foreign_key_checks = 1;\n')
+  await new Promise(r => stream.end(r))
+
+  console.log(`\n✅ Done — ${done} items written, ${skipped} skipped (no infobox), ${errors} errors`)
+  console.log(`📄 File: ${OUT_FILE}`)
+  console.log('   → Import via phpMyAdmin or: mysql -u user -p db < scripts/wiki-dump.sql')
   process.exit(0)
 }
 
